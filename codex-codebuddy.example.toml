@@ -1,12 +1,23 @@
 # ============================================================
-# Codex 接入 CodeBuddy/WorkBuddy 订阅 —— 示例配置（片段）
+# CodeBuddy/WorkBuddy 订阅 -> OpenAI 兼容客户端 —— provider 配置示例（片段）
 # ------------------------------------------------------------
-# ⚠️ 本文件只是「示例」。请把下面 [model_providers.codebuddy] 与
-#    [profiles.codebuddy] 两段【手动】复制/合并进你自己的 Codex 配置
-#    （通常是 ~/.codex/config.toml）。本脚本绝不自动改写你的配置。
+# ⚠️ 重要说明：
+#   新版 Codex CLI 已移除 wire_api = "chat" 的支持，只支持 completions 格式，
+#   因此【本转换器无法接入 Codex CLI】。这个文件主要给那些支持
+#   「自定义 OpenAI 兼容 provider（读 toml 片段）」的第三方客户端作参考，
+#   例如 ZCode、Cherry Studio 等。
+#
+#   如果你的客户端是图形界面（Cherry Studio / NextChat 等），通常不需要这个文件，
+#   只需在「自定义模型 / OpenAI 兼容」里填：
+#     接口地址 base_url : http://127.0.0.1:8787/v1
+#     API Key          : 留空（除非转换器启动时用了 --api-key）
+#     模型名 model     : glm-5.2 （或 kimi-k2.7 / deepseek-v4-pro / auto）
 #
 # 前提：转换器已在本地运行（见 README.md）
 #   python3 converter.py --port 8787
+#
+# ⚠️ 本文件只是「示例」。若你的客户端需要合并配置，请【手动】把下面两段
+#    复制/合并进你自己的配置文件。本脚本绝不自动改写任何已有配置。
 # ============================================================
 
 # 1) 定义一个指向本地转换器的「模型提供商」
@@ -14,13 +25,10 @@
 name = "CodeBuddy (via local converter)"
 base_url = "http://127.0.0.1:8787/v1"
 env_key = "CODEBUDDY2OPENAI_KEY"   # 转换器未启用 --api-key 时，可随便填一个环境变量名
-wire_api = "chat"                  # OpenAI 兼容的 /v1/chat/completions
+# 注意：本接口是 OpenAI chat 协议（/v1/chat/completions）。
+# 新版 Codex CLI 因不再支持该 wire_api 而无法使用，请用 ZCode / Cherry Studio 等 OpenAI 兼容客户端。
 
-# 2) 定义一个使用该提供商的 profile
+# 2) 定义一个使用该提供商的 profile（仅支持该配置格式的客户端需要）
 [profiles.codebuddy]
 model = "glm-5.2"                  # 也可用 kimi-k2.7 / deepseek-v4-pro / auto 等
 model_provider = "codebuddy"
-
-# 使用方式（任选其一）：
-#   codex --profile codebuddy "你的问题"
-#   或在 ~/.codex/config.toml 里设 model_provider = "codebuddy" 作为默认

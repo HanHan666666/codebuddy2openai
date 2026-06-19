@@ -1,6 +1,8 @@
 # codebuddy2openai
 
-> 把 **CodeBuddy / WorkBuddy（腾讯代码助手）** 的订阅，转换成 **OpenAI 兼容 API**，让你能在 **Codex CLI**、任何支持 OpenAI 协议的客户端里复用它。
+> 把 **CodeBuddy / WorkBuddy（腾讯代码助手）** 的订阅，转换成 **OpenAI 兼容 API**，让你能在任何支持 OpenAI 协议的客户端（ZCode、Cherry Studio、NextChat、LobeChat 等）里复用它。
+
+> ⚠️ **关于 Codex CLI**：新版 Codex CLI 已不再支持 `wire_api = "chat"`，只支持 `completions` 格式，因此**本工具无法直接接入 Codex CLI**，请改用下方「OpenAI 兼容客户端」方案。
 
 [English](#english) · [中文文档](#中文文档)
 
@@ -8,7 +10,7 @@
 
 ## 中文文档
 
-一个极简的本地协议转换器（proxy / adapter）：读取你本机已登录的 CodeBuddy 桌面端凭据，把它的对话能力包装成标准的 OpenAI `/v1/chat/completions`、`/v1/models` 接口。**不碰登录授权、不碰你的 Codex 配置、跨平台、单文件。**
+一个极简的本地协议转换器（proxy / adapter）：读取你本机已登录的 CodeBuddy 桌面端凭据，把它的对话能力包装成标准的 OpenAI `/v1/chat/completions`、`/v1/models` 接口。**不碰登录授权、不碰你已有的客户端配置、跨平台、单文件。**
 
 ### ✨ 特性
 
@@ -22,7 +24,7 @@
 ### 🧠 它是怎么工作的
 
 ```
-Codex / 任意 OpenAI 客户端
+ZCode / Cherry Studio / 任意 OpenAI 客户端
         │  POST /v1/chat/completions  (OpenAI 协议)
         ▼
 ┌────────────────────┐
@@ -69,29 +71,34 @@ python3 converter.py
 
 启动时会做一次预检，打印找到的 CLI 和登录文件路径。
 
-### 🔌 在 Codex CLI 里使用
+### 🔌 接入客户端
 
-⚠️ **本工具绝不自动修改你的 Codex 配置。** 请手动操作：
+⚠️ **关于 Codex CLI（重要）**：新版本 Codex CLI 已**移除** `wire_api = "chat"` 的支持，目前只认 `completions` 格式，因此**本转换器无法直接接入 Codex CLI**。仓库里的 `codex-codebuddy.example.toml` 仅作历史/参考保留，实测在当前 Codex 上跑不通，请不要照抄。
+
+✅ **可用方式 —— 任何标准 OpenAI 兼容客户端**（走 `/v1/chat/completions`）。常见选择：
+
+- **ZCode**（OpenAI 兼容 Agent）
+- **Cherry Studio**
+- **NextChat / LobeChat / Open WebUI**
+- 任何支持自定义 `base_url` 的 OpenAI SDK 客户端
+
+通用接入步骤（以这类客户端为例）：
 
 1. 保持转换器运行：`python3 converter.py`
-2. 把 `codex-codebuddy.example.toml` 里的 `[model_providers.codebuddy]` 与 `[profiles.codebuddy]` 两段，**手动复制/合并**进你自己的 `~/.codex/config.toml`。
-3. 使用：
-   ```bash
-   codex --profile codebuddy "帮我写一个快速排序"
-   ```
+2. 在客户端的「自定义模型 / OpenAI 兼容」设置里：
+   - **API Base / 接口地址**：`http://127.0.0.1:8787/v1`
+   - **API Key**：留空（转换器默认不校验）；若启动时用了 `--api-key`，则填同一个
+   - **模型名**：`glm-5.2`（或 `kimi-k2.7` / `deepseek-v4-pro` / `auto` 等，见下方列表）
 
-示例配置（详见 `codex-codebuddy.example.toml`）：
+示例配置（如果你用的客户端读 toml / 自定义 provider 片段）：
 
 ```toml
 [model_providers.codebuddy]
 name = "CodeBuddy (via local converter)"
 base_url = "http://127.0.0.1:8787/v1"
 env_key = "CODEBUDDY2OPENAI_KEY"
-wire_api = "chat"
-
-[profiles.codebuddy]
-model = "glm-5.2"
-model_provider = "codebuddy"
+# 注意：本接口是 OpenAI chat 协议（/v1/chat/completions）。
+# Codex CLI 因不再支持该 wire_api 而无法使用，请用 ZCode / Cherry Studio 等 OpenAI 兼容客户端。
 ```
 
 ### 🧪 curl 验证
@@ -122,7 +129,7 @@ curl -N http://127.0.0.1:8787/v1/chat/completions \
 ```
 codebuddy2openai/
 ├── converter.py                     # 转换器主程序（单文件）
-├── codex-codebuddy.example.toml     # Codex 配置示例片段（手动参考）
+├── codex-codebuddy.example.toml     # provider 配置示例片段（仅供参考；Codex CLI 已不支持，见上方说明）
 ├── README.md
 └── LICENSE
 ```
@@ -145,7 +152,7 @@ python3 converter.py [--host HOST] [--port PORT] [--api-key KEY] [--cwd DIR] [--
 
 - **找不到 CLI**：确认装了桌面端；或设环境变量 `CODEBUDDY_CODE_PATH` 指向 `cli/bin/codebuddy`。
 - **找不到登录文件**：在桌面端完成登录（不是只装、要登进去）。
-- **Codex 报 401**：转换器若用了 `--api-key`，Codex 那边要带同样的 key。
+- **客户端报 401**：转换器若用了 `--api-key`，客户端那边要带同样的 key。
 - **响应慢**：CLI 首次调用冷启动，后续会快；也可换 `deepseek-v4-flash` 等更快的模型。
 
 ### ⚠️ 免责声明
@@ -161,7 +168,9 @@ python3 converter.py [--host HOST] [--port PORT] [--api-key KEY] [--cwd DIR] [--
 <a name="english"></a>
 # English
 
-A minimal local **protocol converter / proxy** that exposes your already-logged-in **CodeBuddy / WorkBuddy (Tencent coding assistant)** subscription as a standard **OpenAI-compatible API**, so you can use it from **Codex CLI** or any OpenAI-protocol client. **No auth changes, no edits to your Codex config, cross-platform, single file.**
+A minimal local **protocol converter / proxy** that exposes your already-logged-in **CodeBuddy / WorkBuddy (Tencent coding assistant)** subscription as a standard **OpenAI-compatible API**, so you can use it from any OpenAI-protocol client (ZCode, Cherry Studio, NextChat, LobeChat, Open WebUI, etc.). **No auth changes, no edits to your client config, cross-platform, single file.**
+
+> ⚠️ **Codex CLI note:** newer Codex CLI dropped `wire_api = "chat"` and only supports the `completions` format, so **this tool cannot be used with Codex CLI**. Use any OpenAI-compatible client instead.
 
 ### ✨ Features
 
@@ -180,7 +189,7 @@ pip install fastapi "uvicorn[standard]"
 python3 converter.py
 ```
 
-Then point your OpenAI client at `http://127.0.0.1:8787/v1`. See `codex-codebuddy.example.toml` for the Codex profile snippet (merge it into your own `~/.codex/config.toml` manually — this tool never edits your config).
+Then point your OpenAI-compatible client at `http://127.0.0.1:8787/v1` (API base), leave the key blank unless you started the converter with `--api-key`. Note: Codex CLI is **not** supported (it dropped `wire_api = "chat"`); use ZCode, Cherry Studio, or any OpenAI-compatible client instead.
 
 ### ⚠️ Disclaimer
 
