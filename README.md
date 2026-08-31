@@ -54,7 +54,7 @@ ZCode / Cherry Studio / 任意 OpenAI 客户端
 2. **Python 3.8+**（无需 Node.js，不再依赖 CLI）。
 3. 安装依赖（一次性）：
    ```bash
-   pip install fastapi "uvicorn[standard]" httpx
+   pip install -r requirements.txt
    ```
 
 ### 🚀 快速开始
@@ -65,7 +65,7 @@ git clone https://github.com/HanHan666666/codebuddy2openai.git
 cd codebuddy2openai
 
 # 2. 装依赖
-pip install fastapi "uvicorn[standard]" httpx
+pip install -r requirements.txt
 
 # 3. 启动（确保 CodeBuddy 桌面端已登录）
 python3 converter.py
@@ -246,11 +246,18 @@ A minimal local **protocol converter / proxy** that exposes your already-logged-
 ```bash
 git clone https://github.com/HanHan666666/codebuddy2openai.git
 cd codebuddy2openai
-pip install fastapi "uvicorn[standard]"
+pip install -r requirements.txt
 python3 converter.py
 ```
 
 Then point your OpenAI-compatible client at `http://127.0.0.1:8787/v1` (API base), leave the key blank unless you started the converter with `--api-key`. Note: Codex CLI is **not** supported (it dropped `wire_api = "chat"`); use ZCode, Cherry Studio, or any OpenAI-compatible client instead.
+
+### Running the tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
 
 ### API key mode (`--direct-key`)
 
