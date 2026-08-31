@@ -21,3 +21,6 @@ Thumbs.db
 *.token
 *.key
 secrets.*
+
+# tests
+.pytest_cache/
