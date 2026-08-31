@@ -186,12 +186,31 @@ class CredentialManager:
 # 模型列表
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODELS = [
+BACKEND_BY_DOMAIN = {
+    "www.workbuddy.ai": "https://www.workbuddy.ai",
+    "www.codebuddy.cn": "https://copilot.tencent.com",
+}
+
+def backend_for_domain(domain: str | None) -> str:
+    return BACKEND_BY_DOMAIN.get(domain or "", "https://copilot.tencent.com")
+
+# Model catalog for the China desktop-token path (unchanged from upstream).
+CN_MODELS = [
     "glm-5.2", "glm-5.1", "glm-5v-turbo",
     "kimi-k2.7", "kimi-k2.6", "kimi-k2.5",
     "deepseek-v4-pro", "deepseek-v4-flash",
     "minimax-m3-pay", "hy3-preview-agent", "auto",
 ]
+# Verified live (2026-08-31) against the international endpoint with a CK_* key.
+# Upstream rejects unknown ids with code 11102, so each entry below answered 200.
+INTL_MODELS = [
+    "auto", "hy3", "glm-5.3", "glm-5.2", "glm-5.1", "glm-5v-turbo",
+    "minimax-m3", "kimi-k3", "kimi-k2.7", "kimi-k2.6",
+    "deepseek-v4-pro", "deepseek-v4-flash",
+    "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gemini-3.1-pro",
+]
+
+DEFAULT_MODELS = CN_MODELS
 
 # 后端请求体里出现过的额外字段（透传时若客户端给了就保留）
 PASSTHROUGH_BODY_KEYS = {
@@ -208,7 +227,9 @@ PASSTHROUGH_BODY_KEYS = {
 
 app = FastAPI(title="codebuddy2openai", version="2.0")
 CONFIG: dict = {"api_key": "", "cred": None, "log_path": None,
-                "desensitize": False}  # cred: CredentialManager | None
+                "desensitize": False,  # cred: CredentialManager | None
+                "direct_key": None}    # CK_* API-key mode: bypass desktop token entirely
+DIRECT_KEY_BACKEND = "https://www.codebuddy.ai"
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +274,8 @@ def _check_auth(authorization: Optional[str], x_api_key: Optional[str]):
 
 
 def _cred() -> CredentialManager:
+    if CONFIG.get("direct_key"):
+        raise HTTPException(status_code=500, detail={"error": {"message": "internal: _cred called in direct-key mode", "type": "auth_error"}})
     if CONFIG["cred"] is None:
         raise HTTPException(status_code=503, detail={"error": {"message": "未找到登录凭据，请先在桌面端登录 CodeBuddy/WorkBuddy", "type": "auth_error"}})
     return CONFIG["cred"]
@@ -275,8 +298,9 @@ def health():
 def list_models(authorization: Optional[str] = Header(default=None),
                 x_api_key: Optional[str] = Header(default=None, alias="X-Api-Key")):
     _check_auth(authorization, x_api_key)
+    models = INTL_MODELS if CONFIG.get("direct_key") else DEFAULT_MODELS
     data = [{"id": m, "object": "model", "created": 1700000000, "owned_by": "codebuddy"}
-            for m in DEFAULT_MODELS]
+            for m in models]
     return {"object": "list", "data": data}
 
 
@@ -285,7 +309,9 @@ async def chat_completions(request: Request,
                            authorization: Optional[str] = Header(default=None),
                            x_api_key: Optional[str] = Header(default=None, alias="X-Api-Key")):
     _check_auth(authorization, x_api_key)
-    cred = _cred()
+    cred = None
+    if not CONFIG.get("direct_key"):
+        cred = _cred()
 
     try:
         payload = await request.json()
@@ -322,8 +348,24 @@ async def chat_completions(request: Request,
     # 完整请求体（发往后端的实际内容；若启用脱敏，这里已是脱敏后）
     _log(f"[{rid}] ── REQUEST BODY (发往后端) ──\n{json.dumps(body, ensure_ascii=False, indent=2)}")
 
-    headers = cred.get_headers()
-    url = f"{BACKEND}/v2/chat/completions"
+    if CONFIG.get("direct_key"):
+        # CK_* API-key mode: no desktop credential, plain Bearer against
+        # the international endpoint. Upstream rejects non-stream and
+        # system-less requests (errors 11101/11128); both are handled below.
+        headers = {"Content-Type": "application/json", "Accept": "application/json",
+                   "Authorization": f"Bearer {CONFIG['direct_key']}",
+                   "User-Agent": USER_AGENT}
+        backend = DIRECT_KEY_BACKEND
+    else:
+        headers = cred.get_headers()
+        # Backend depends on which realm the credentials belong to
+        # (WorkBuddy international -> www.workbuddy.ai, CodeBuddy CN -> copilot.tencent.com)
+        domain = (cred._session().get("auth") or {}).get("domain")
+        backend = backend_for_domain(domain)
+    # Upstream requires the first message to be a system prompt
+    if messages and messages[0].get("role") != "system":
+        body["messages"] = [{"role": "system", "content": "You are a helpful assistant."}] + body.get("messages", [])
+    url = f"{backend}/v2/chat/completions"
     t0 = time.time()
 
     if client_wants_stream:
@@ -594,17 +636,20 @@ def main():
     ap.add_argument("--desensitize", action="store_true",
                     help="启用脱敏：对 system 消息里的合规模板敏感词（DoS/exploit/credential 等）"
                          "插入零宽空格，缓解被后端内容审核误拦。默认关闭。")
+    ap.add_argument("--direct-key", default=os.environ.get("CODEBUDDY_DIRECT_KEY", ""),
+                    help="CK_* CodeBuddy API key: bypass desktop session, call the international backend directly")
     ap.add_argument("--skip-check", action="store_true", help="跳过启动预检")
     args = ap.parse_args()
 
     CONFIG["api_key"] = args.api_key
     CONFIG["desensitize"] = args.desensitize
+    CONFIG["direct_key"] = (args.direct_key or "").strip() or None
     # --log 直接指定文件路径即开启；不传则不记
     CONFIG["log_path"] = args.log if args.log else os.environ.get("CODEBUDDY2OPENAI_LOG")
     af = find_auth_file()
-    CONFIG["cred"] = CredentialManager(af) if af else None
+    CONFIG["cred"] = CredentialManager(af) if (af and not CONFIG["direct_key"]) else None
 
-    if not args.skip_check:
+    if not args.skip_check and not CONFIG["direct_key"]:
         preflight()
 
     sys.stderr.write(f"\n✅ 监听 http://{args.host}:{args.port}（直连后端，原生 function calling）\n")

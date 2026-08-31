@@ -74,6 +74,30 @@ python3 converter.py
 
 启动时会做一次预检，打印账号信息和 token 状态。
 
+### 🔑 API 密钥模式（`--direct-key`）
+
+WorkBuddy 国际版账号（`www.workbuddy.ai` 的 Keycloak 域）走桌面端令牌会 401：令牌格式与转换器调用的后端不匹配，刷新也会报 `invalid_grant`。如果你的账号是这种情况，可以完全跳过桌面端登录，改用 **CK_\* API 密钥**（在 [codebuddy.ai/profile/keys](https://www.codebuddy.ai/profile/keys) 生成，即 CLI 文档里的 `CODEBUDDY_API_KEY`）：
+
+```bash
+python3 converter.py --direct-key ck_你的密钥
+# 或：export CODEBUDDY_DIRECT_KEY=ck_你的密钥
+```
+
+该模式下：
+
+- 无需桌面端登录；密钥以 `Authorization: Bearer` 直接发往 `https://www.codebuddy.ai/v2/chat/completions`。可无界面部署（服务器、容器、NAS）。
+- `/v1/models` 返回国际版目录（见下文「可用模型」）。
+- 启动预检（面向桌面端会话）自动跳过。
+
+后端的几个坑（先知道，免得对着报错发懵）：
+
+- 请求必须 `stream: true`，非流式会被拒（错误码 `11101`）。转换器对上游永远走流式、再按客户端要求聚合，所以只有自己裸调接口才会碰到。
+- 第一条消息必须是 `system` 角色（错误码 `11128`）。转换器会在客户端没给时自动补一条。
+- 模型 ID **区分大小写**，未知的直接拒（错误码 `11102`）：`hy3` 可以，`Hy3` 不行。
+- `gpt-5.6-luna` 等模型对过小的 `max_tokens` 会拒绝（错误码 `11133`，integer_below_min_value），建议 ≥100。
+
+密钥是有效凭证，按密码对待，到期记得轮换。
+
 ### 🛠️ Function Calling（工具调用）
 
 后端原生支持标准 OpenAI function calling。客户端（如 ZCode / Cherry Studio）在请求里带 `tools`，模型原生返回 `tool_calls`（`finish_reason:"tool_calls"`），客户端执行工具后把 `role:"tool"` 的结果回传即可——和直连 OpenAI 完全一致。流式、非流式、多轮工具调用都支持。
@@ -131,6 +155,12 @@ curl -N http://127.0.0.1:8787/v1/chat/completions \
 
 （来自 CLI `--help` 的 `--model` 说明，具体可用性以你的订阅为准。）
 
+**API 密钥模式（国际版）**下，`/v1/models` 返回的是国际版目录（2026-08-31 实测全部可用）：
+
+`auto`、`hy3`、`glm-5.3`、`glm-5.2`、`glm-5.1`、`glm-5v-turbo`、`minimax-m3`、`kimi-k3`、`kimi-k2.7`、`kimi-k2.6`、`deepseek-v4-pro`、`deepseek-v4-flash`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.6-sol`、`gemini-3.1-pro`
+
+注意：模型 ID **区分大小写**（`hy3` 可以，`Hy3` 不行）；`gpt-5.6-luna` 等模型对过小的 `max_tokens` 会拒绝（建议 ≥100）。
+
 ### 📁 项目结构
 
 ```
@@ -144,8 +174,12 @@ codebuddy2openai/
 
 ### 🔧 命令行参数
 
+| 参数 | 说明 |
+|------|------|
+| `--direct-key <ck_...>` | **API 密钥模式**：跳过桌面端登录，直接用 CK_\* 密钥调用国际版后端。适合 WorkBuddy 国际版账号（桌面端令牌会 401）以及无界面部署。详见下文「API 密钥模式」。 |
+
 ```
-python3 converter.py [--host HOST] [--port PORT] [--api-key KEY] [--log PATH] [--desensitize] [--skip-check]
+python3 converter.py [--host HOST] [--port PORT] [--api-key KEY] [--direct-key CK_KEY] [--log PATH] [--desensitize] [--skip-check]
 ```
 
 | 参数 | 默认 | 说明 |
@@ -153,6 +187,7 @@ python3 converter.py [--host HOST] [--port PORT] [--api-key KEY] [--log PATH] [-
 | `--host` | `127.0.0.1` | 监听地址 |
 | `--port` | `8787` | 监听端口 |
 | `--api-key` | 无 | 启用鉴权；客户端需带同样 key（也可用环境变量 `CODEBUDDY2OPENAI_KEY`）|
+| `--direct-key` | 无 | CK_\* 密钥（或环境变量 `CODEBUDDY_DIRECT_KEY`）；设置后进入 API 密钥模式，详见下文 |
 | `--log` | 无 | **开启日志并写到该文件**（如 `--log converter.log`）。不传则不记。也可用环境变量 `CODEBUDDY2OPENAI_LOG`。|
 | `--desensitize` | 关 | 启用脱敏：对 system 消息里的合规声明敏感词（DoS/exploit/credential/C2 等）插入零宽空格，缓解被后端内容审核误拦（见下方 FAQ）。|
 | `--skip-check` | 否 | 跳过启动预检 |
@@ -176,7 +211,7 @@ python3 converter.py                              # 不记日志
 
 ### ❓ 常见问题
 
-- **找不到登录文件**：在桌面端完成登录（不是只装、要登进去）。路径见上方「前置条件」。
+- **找不到登录文件**：在桌面端完成登录（不是只装、要登进去）。路径见上方「前置条件」。**国际版（workbuddy.ai）账号例外**：桌面端令牌与后端不匹配，登录后仍会 401，请改用「API 密钥模式」（`--direct-key`，见下文）。
 - **客户端报 401**：转换器若用了 `--api-key`，客户端那边要带同样的 key；若是后端 401，可能是 token 失效（转换器会自动刷新，若仍失败需在桌面端重新登录）。
 - **响应慢**：可换 `deepseek-v4-flash` 等更快的模型。
 - **"敏感内容"被拦截**：这是 CodeBuddy 后端的**内容审核**（腾讯合规策略），在模型推理之前就拦了。常见触发原因是客户端注入的 system prompt 里含安全相关英文术语（如 DoS / exploit / credential / C2 等——这些往往是客户端**合规声明模板**里的"拒绝作恶"措辞，属误伤）。两种应对：①用 `--log xxx.log` 在日志里看 `⚠️内容审核拦截` 标记定位是哪条请求；②加 `--desensitize` 启用脱敏模块（`desensitize.py`），它对 system 消息里的这类合规词插入零宽空格（人/模型读无差别，但后端关键词匹配失效），可显著降低被误拦概率。注意：脱敏只针对客户端固定模板，不能也不应绕过对用户真实有害输入的审核。
@@ -216,6 +251,30 @@ python3 converter.py
 ```
 
 Then point your OpenAI-compatible client at `http://127.0.0.1:8787/v1` (API base), leave the key blank unless you started the converter with `--api-key`. Note: Codex CLI is **not** supported (it dropped `wire_api = "chat"`); use ZCode, Cherry Studio, or any OpenAI-compatible client instead.
+
+### API key mode (`--direct-key`)
+
+WorkBuddy international accounts (Keycloak realm on `www.workbuddy.ai`) get 401s from the desktop-token path: the token shape does not match the backend the converter calls, and refresh fails with `invalid_grant`. If that is your situation, skip the desktop session entirely and use a **CK_\* API key** instead (generate one at [codebuddy.ai/profile/keys](https://www.codebuddy.ai/profile/keys); the CLI documents the same key as `CODEBUDDY_API_KEY`).
+
+```bash
+python3 converter.py --direct-key ck_yourkeyhere
+# or: export CODEBUDDY_DIRECT_KEY=ck_yourkeyhere
+```
+
+What changes in this mode:
+
+- No desktop app or login needed; the key is sent as a plain `Authorization: Bearer` header to `https://www.codebuddy.ai/v2/chat/completions`. Works headless (servers, containers, NAS).
+- `/v1/models` lists the international catalog, verified live: `auto`, `hy3`, `glm-5.3/5.2/5.1/5v-turbo`, `minimax-m3`, `kimi-k3/k2.7/k2.6`, `deepseek-v4-pro/flash`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, `gemini-3.1-pro`.
+- The startup preflight (which expects a desktop session) is skipped.
+
+Backend quirks worth knowing (they produce confusing errors if you meet them blind):
+
+- Requests must use `stream: true`; non-stream calls are rejected with error `11101`. The converter always streams upstream and aggregates when the client asked for non-streaming, so this only matters for raw calls.
+- The first message must have role `system` (error `11128`). The converter prepends a system message when the client omits one.
+- Model IDs are case-sensitive and reject unknown values with error `11102` (`Hy3` fails, `hy3` works).
+- `gpt-5.6-luna` and friends reject very small `max_tokens` values (error `11133`, "integer_below_min_value"); stay above roughly 100.
+
+The key is a live credential: treat it like a password, and expect to rotate it when it expires.
 
 ### ⚠️ Disclaimer
 
