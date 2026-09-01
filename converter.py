@@ -28,7 +28,9 @@ import sys
 import threading
 import time
 from pathlib import Path
+import platform
 from typing import Optional
+import getpass
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -53,20 +55,49 @@ USER_AGENT = "codebuddy2openai/2.0"
 # 平台相关：定位 auth 目录
 # ---------------------------------------------------------------------------
 
-def auth_dirs() -> list[Path]:
+def is_wsl():
+    release = platform.release().lower()
+    return "microsoft" in release or "wsl" in release
+
+
+def get_win_home_fast():
+    # 先尝试直接通过当前 Linux 用户名查找对应的 Windows 目录
+    possible_username = getpass.getuser()
+    candidate = f"/mnt/c/Users/{possible_username}"
+
+    if os.path.exists(candidate):
+        return candidate
+
+    # 如果用户名不一致，遍历 /mnt/c/Users 寻找真正的用户目录
+    users_dir = "/mnt/c/Users"
+    ignore = {"Public", "Default", "Default User", "All Users", "desktop.ini"}
+
+    if os.path.exists(users_dir):
+        for entry in os.listdir(users_dir):
+            if entry not in ignore and not entry.startswith("."):
+                return os.path.join(users_dir, entry)
+
+
+def auth_dirs(use_windows_auth: bool) -> list[Path]:
     home = Path.home()
     plat = sys.platform
+
+    if is_wsl() and use_windows_auth:
+        home = Path(get_win_home_fast())
+        plat = "win32"
+    
     if plat == "darwin":
         return [home / "Library" / "Application Support" / "CodeBuddyExtension" / "Data" / "Public" / "auth"]
     if plat == "win32":
         local = Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local"))
         return [local / "CodeBuddyExtension" / "Data" / "Public" / "auth"]
+
     xdg = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
     return [xdg / "CodeBuddyExtension" / "Data" / "Public" / "auth"]
 
 
-def find_auth_file() -> Path | None:
-    for d in auth_dirs():
+def find_auth_file(wsl: bool) -> Path | None:
+    for d in auth_dirs(wsl):
         if d.is_dir():
             for f in sorted(d.glob("*.info")):
                 return f
@@ -556,15 +587,15 @@ def _err_event(msg: bytes, status: int) -> bytes:
 # 启动
 # ---------------------------------------------------------------------------
 
-def preflight() -> bool:
-    af = find_auth_file()
+def preflight(wsl: bool) -> bool:
+    af = find_auth_file(wsl)
     sys.stderr.write("==== 预检 ====\n")
     sys.stderr.write(f"平台      : {sys.platform}\n")
     sys.stderr.write(f"Python    : {sys.version.split()[0]}\n")
     sys.stderr.write(f"后端      : {BACKEND} (直连，原生 function calling)\n")
     sys.stderr.write(f"登录文件  : {af or '(未找到)'}\n")
-    if auth_dirs():
-        sys.stderr.write(f"已查目录  : {', '.join(str(d) for d in auth_dirs())}\n")
+    if auth_dirs(wsl):
+        sys.stderr.write(f"已查目录  : {', '.join(str(d) for d in auth_dirs(wsl))}\n")
     ok = True
     if af is None:
         sys.stderr.write("\n[警告] 未找到登录文件。请在桌面端完成登录（CodeBuddy/WorkBuddy）。\n")
@@ -595,17 +626,18 @@ def main():
                     help="启用脱敏：对 system 消息里的合规模板敏感词（DoS/exploit/credential 等）"
                          "插入零宽空格，缓解被后端内容审核误拦。默认关闭。")
     ap.add_argument("--skip-check", action="store_true", help="跳过启动预检")
+    ap.add_argument("--wsl", action="store_true", help="在wsl中读取Windows文件系统中的凭据")
     args = ap.parse_args()
 
     CONFIG["api_key"] = args.api_key
     CONFIG["desensitize"] = args.desensitize
     # --log 直接指定文件路径即开启；不传则不记
     CONFIG["log_path"] = args.log if args.log else os.environ.get("CODEBUDDY2OPENAI_LOG")
-    af = find_auth_file()
+    af = find_auth_file(args.wsl)
     CONFIG["cred"] = CredentialManager(af) if af else None
 
     if not args.skip_check:
-        preflight()
+        preflight(args.wsl)
 
     sys.stderr.write(f"\n✅ 监听 http://{args.host}:{args.port}（直连后端，原生 function calling）\n")
     sys.stderr.write("   GET  /v1/models\n")
