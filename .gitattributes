@@ -7,6 +7,12 @@
 *.md text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.txt text eol=lf
+.env.example text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
 
 # Binary assets, never diffed or merged as text.
 *.png binary
