@@ -1,0 +1,22 @@
+# Normalise line endings so the shell and Windows launchers stay runnable.
+* text=auto
+
+*.sh text eol=lf
+*.bat text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Binary assets, never diffed or merged as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+
+# Generated and dependency artifacts, excluded from language statistics.
+.venv/** linguist-vendored
+__pycache__/** linguist-generated
+*.pyc linguist-generated

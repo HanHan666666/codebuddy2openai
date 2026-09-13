@@ -1,0 +1,60 @@
+# CodeRabbit configuration
+# Docs: https://docs.coderabbit.ai/getting-started/configure-coderabbit-overview
+language: "en-GB"
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  commit_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "converter.py"
+      instructions: |
+        Review with thermo-nuclear standards: implementation quality, abstraction quality and codebase health, not just local nits. Prioritise in this order: structural regressions, missed dramatic simplifications ("code judo" reframings that delete whole branches or layers), spaghetti/branching growth, boundary and type-contract problems, file-size and decomposition, modularity, legibility.
+
+        This file is the whole proxy and sits near the 1000-line threshold. Flag any change that pushes it past 1000 lines, and ask whether the code should be decomposed into modules first.
+
+        Flag: ad-hoc conditionals bolted onto unrelated flows, one-off flags that complicate control flow, feature logic leaking into shared paths, thin wrappers that add indirection without clarity, unnecessary casts or Optional plumbing, duplicated logic where a canonical helper exists, unnecessary sequential orchestration or non-atomic updates.
+
+        Domain-specific checks:
+        - Credential handling must not put secrets in argv, log output, error responses, or crash output. Any change that touches key or token resolution gets this check explicitly.
+        - The translation layer between the OpenAI request shape and the upstream shape must preserve exact wire semantics. A change described as a refactor that alters a verb, a header, a field name, or a streaming frame boundary is not a refactor.
+        - Streaming reassembly and tool_calls mapping are the highest-risk paths. Confirm a change there has a test that exercises partial frames and out-of-order chunks, not only the happy path.
+        - Error handling must sit at the layer that owns the invariant. A widened except clause that swallows a domain error one layer too deep is a defect even when it makes a test pass.
+
+        A test suite that has never been observed failing is not a safety net. Where a change relies on existing tests for behaviour preservation, ask whether those tests were seen red against the old code.
+
+        Do not approve merely because behaviour seems correct: the bar is no structural regression, no obvious missed simplification, no spaghetti growth, and no credential exposure. Prefer a few high-conviction comments over cosmetic nits. Be direct and demanding about quality, but not rude.
+    - path: "tests/**"
+      instructions: |
+        Tests assert behaviour, not the shape of the source. Reject a test that reads a source file's text, that freezes a current count or version, or that passes both before and after the change it claims to cover.
+
+        For a change described as a refactor, the test must exercise the old code path as well, so a regression is observable. Assert exact wire tuples (verb, path, params, body) for anything touching transport, not a loose shape match.
+
+        Prefer assertion lists over sets unless order genuinely does not matter.
+    - path: "**/*.md"
+      instructions: |
+        Documentation is reviewed for accuracy against the code, not for style alone. Any sentence naming a flag, a path, an endpoint, an exit code or a count must match the implementation. Flag a claim the code contradicts.
+
+        Spelling is en-GB. Identifiers, commands and JSON keys keep their original form.
+    - path: "*.sh"
+      instructions: |
+        Shell scripts are executable text, not prose. Do not suggest typography changes to quoting; a double quote in shell is an operator.
+
+        Check that no secret reaches argv, that the script fails loudly rather than continuing on a missing dependency, and that interpreter resolution cannot silently select a system Python that lacks the project dependencies.
+    - path: "*.bat"
+      instructions: |
+        Windows launchers must resolve the same interpreter and the same dependency set as start.sh. Flag any divergence in behaviour between a .bat launcher and the shell equivalent.
+    - path: ".gitignore"
+      instructions: |
+        Confirm secrets stay ignored (.env, tokens, keys) and that no build or cache artifact is newly tracked.
+
+chat:
+  auto_reply: true
